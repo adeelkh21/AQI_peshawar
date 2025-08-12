@@ -139,6 +139,12 @@ class TrainingFeatureFetcher:
             try:
                 fg = self.fs.get_feature_group(category, version=1)
                 logger.info(f"   📋 Found feature group: {category}")
+                
+                # Check if feature group is properly initialized
+                if fg is None:
+                    logger.warning(f"   ⚠️ Feature group {category} is None - not properly initialized")
+                    return None
+                    
             except Exception as e:
                 logger.warning(f"   ⚠️ Feature group {category} not found: {str(e)}")
                 return None
@@ -152,16 +158,30 @@ class TrainingFeatureFetcher:
             # Create query with time filter
             query = fg.select_all()
             
-            # Read data (Hopsworks handles time filtering automatically if configured)
-            df = query.read()
+            # Read data with comprehensive error handling
+            try:
+                df = query.read()
+            except Exception as read_error:
+                error_msg = str(read_error)
+                if "hoodie.properties" in error_msg or "No such file or directory" in error_msg:
+                    logger.warning(f"   ⚠️ Feature group {category} not properly initialized (missing metadata)")
+                    logger.warning(f"   💡 This is normal for newly created feature groups")
+                    return None
+                else:
+                    logger.error(f"   ❌ Error reading {category}: {error_msg}")
+                    return None
             
             if df is None or len(df) == 0:
                 logger.warning(f"   ⚠️ No data returned for {category}")
                 return None
             
-            # Ensure timestamp column exists and is datetime
+            # Ensure timestamp column exists and is datetime with proper timezone handling
             if 'timestamp' in df.columns:
                 df['timestamp'] = pd.to_datetime(df['timestamp'])
+                
+                # Convert to timezone-naive datetime for comparison
+                if df['timestamp'].dt.tz is not None:
+                    df['timestamp'] = df['timestamp'].dt.tz_localize(None)
                 
                 # Apply time filtering manually if needed
                 df = df[(df['timestamp'] >= start_time) & (df['timestamp'] <= end_time)]
@@ -401,6 +421,44 @@ class TrainingFeatureFetcher:
             logger.error(f"❌ Error saving features: {str(e)}")
             return False
 
+    def _load_local_features_fallback(self) -> Optional[pd.DataFrame]:
+        """Load features from local files as fallback when Hopsworks is unavailable"""
+        logger.info("\n📁 Loading Local Features as Fallback")
+        logger.info("-" * 35)
+        
+        try:
+            # Check for local feature files
+            local_feature_file = os.path.join("data_repositories", "features", "engineered", "realtime_features.csv")
+            
+            if not os.path.exists(local_feature_file):
+                logger.warning(f"⚠️ Local feature file not found: {local_feature_file}")
+                return None
+            
+            # Load local features
+            df = pd.read_csv(local_feature_file)
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            
+            # Filter for recent data based on training hours
+            end_time = datetime.now()
+            start_time = end_time - timedelta(hours=self.training_hours)
+            
+            df = df[(df['timestamp'] >= start_time) & (df['timestamp'] <= end_time)]
+            df = df.sort_values('timestamp')
+            
+            if len(df) == 0:
+                logger.warning("⚠️ No recent data in local feature file")
+                return None
+            
+            logger.info(f"✅ Loaded {len(df)} records from local features")
+            logger.info(f"📅 Date range: {df['timestamp'].min()} to {df['timestamp'].max()}")
+            logger.info(f"🔢 Features: {len(df.columns)} columns")
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"❌ Error loading local features: {str(e)}")
+            return None
+
     def run_feature_fetch(self) -> bool:
         """Run complete feature fetching process"""
         logger.info("\n🚀 STARTING FEATURE FETCH FOR TRAINING")
@@ -423,7 +481,21 @@ class TrainingFeatureFetcher:
                     logger.warning(f"   ⚠️ {category}: No data")
             
             if not category_datasets:
-                logger.error("❌ No feature data fetched from any category")
+                logger.warning("⚠️ No feature data fetched from Hopsworks")
+                logger.info("🔄 Attempting to use local feature files as fallback...")
+                
+                # Try to use local features as fallback
+                local_features = self._load_local_features_fallback()
+                if local_features is not None:
+                    logger.info("✅ Using local features as fallback")
+                    # Validate and save local features
+                    is_valid, validation_results = self.validate_training_data(local_features)
+                    if is_valid:
+                        save_success = self.save_training_features(local_features, validation_results)
+                        if save_success:
+                            return True
+                
+                logger.error("❌ No feature data available from Hopsworks or local files")
                 return False
             
             logger.info(f"\n📊 Successfully fetched from {len(category_datasets)}/{len(self.feature_categories)} categories")
