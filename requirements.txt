@@ -17,6 +17,10 @@ optuna==3.4.0
 bayesian-optimization==1.4.3
 scikit-optimize==0.9.0
 
+# Visualization (required by validation)
+matplotlib==3.7.2
+seaborn==0.12.2
+
 # Feature store (to be used later)
 hopsworks>=3.7.0
 pyarrow>=12.0.0

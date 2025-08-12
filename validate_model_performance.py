@@ -21,6 +21,9 @@ import warnings
 import logging
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.metrics import mean_absolute_percentage_error
+# Use headless backend for CI environments
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 
