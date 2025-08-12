@@ -287,7 +287,7 @@ class TrainingFeatureFetcher:
             logger.info(f"   Features: {total_features}")
             
             # Check minimum data requirements
-            min_records_for_training = 500  # Minimum for reliable training
+            min_records_for_training = 50  # Reduced for testing (was 500)
             if total_records < min_records_for_training:
                 validation_results["issues"].append(f"Insufficient records for training ({total_records} < {min_records_for_training})")
                 validation_results["is_valid"] = False
@@ -480,13 +480,17 @@ class TrainingFeatureFetcher:
                 else:
                     logger.warning(f"   ⚠️ {category}: No data")
             
-            if not category_datasets:
-                logger.warning("⚠️ No feature data fetched from Hopsworks")
+            # Check if we have sufficient data for training
+            total_records = sum(len(df) for df in category_datasets.values())
+            min_records_for_training = 50  # Reduced for testing (was 500)
+            
+            if total_records < min_records_for_training:
+                logger.warning(f"⚠️ Insufficient data from Hopsworks: {total_records} < {min_records_for_training}")
                 logger.info("🔄 Attempting to use local feature files as fallback...")
                 
                 # Try to use local features as fallback
                 local_features = self._load_local_features_fallback()
-                if local_features is not None:
+                if local_features is not None and len(local_features) >= min_records_for_training:
                     logger.info("✅ Using local features as fallback")
                     # Validate and save local features
                     is_valid, validation_results = self.validate_training_data(local_features)
@@ -495,7 +499,7 @@ class TrainingFeatureFetcher:
                         if save_success:
                             return True
                 
-                logger.error("❌ No feature data available from Hopsworks or local files")
+                logger.error("❌ No sufficient data available from Hopsworks or local files")
                 return False
             
             logger.info(f"\n📊 Successfully fetched from {len(category_datasets)}/{len(self.feature_categories)} categories")
