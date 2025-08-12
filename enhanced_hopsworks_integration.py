@@ -172,12 +172,23 @@ class EnhancedHopsworksManager:
                 api_key_value=api_key
             )
             
-            # Get feature store (with API compatibility handling)
+            # Get feature store (with comprehensive API compatibility handling)
             try:
                 self.fs = self.project.get_feature_store()
-            except TypeError:
-                # Handle newer API versions that require additional parameters
-                self.fs = self.project.get_feature_store(name=None)
+            except TypeError as e:
+                if "hive_endpoint" in str(e):
+                    # This is a known issue in older Hopsworks versions
+                    logger.warning("⚠️ Detected hive_endpoint issue - attempting alternative initialization")
+                    try:
+                        # Try alternative method for older versions
+                        import hsfs
+                        self.fs = hsfs.connection().get_feature_store()
+                    except:
+                        # Final fallback - get default feature store
+                        self.fs = self.project.get_feature_store(name=None)
+                else:
+                    # Handle other potential parameter issues
+                    self.fs = self.project.get_feature_store(name=None)
             
             # Verify connection by getting project info
             project_info = {
