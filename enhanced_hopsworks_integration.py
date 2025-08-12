@@ -172,8 +172,12 @@ class EnhancedHopsworksManager:
                 api_key_value=api_key
             )
             
-            # Get feature store
-            self.fs = self.project.get_feature_store()
+            # Get feature store (with API compatibility handling)
+            try:
+                self.fs = self.project.get_feature_store()
+            except TypeError:
+                # Handle newer API versions that require additional parameters
+                self.fs = self.project.get_feature_store(name=None)
             
             # Verify connection by getting project info
             project_info = {
