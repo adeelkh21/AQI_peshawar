@@ -21,7 +21,7 @@ import time
 import warnings
 import json
 from logging_config import setup_logging
-from data_validation import DataValidator
+from phase1_data_validation import DataValidator
 warnings.filterwarnings('ignore')
 
 # Configuration
