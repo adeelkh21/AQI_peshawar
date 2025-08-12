@@ -1,0 +1,303 @@
+name: Real-time Data Collection & Feature Engineering Pipeline
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # Run every hour
+  workflow_dispatch:  # Allow manual trigger
+
+# Prevent multiple runs from overlapping
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  realtime_data_pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15  # Extended timeout for feature engineering
+    permissions:
+      contents: read
+      issues: write
+      actions: write
+    
+    env:
+      OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+      HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+      HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Create data repository directories
+      run: |
+        mkdir -p data_repositories/hourly_data/{raw,processed,metadata}
+        mkdir -p data_repositories/merged_data/{raw,processed,metadata}
+        mkdir -p data_repositories/features/{engineered,metadata}
+        mkdir -p data_repositories/hopsworks/{updates,logs}
+    
+    - name: Run hourly data collection
+      id: data_collection
+      run: |
+        echo "🔄 Starting hourly data collection..."
+        python phase1_data_collection.py
+        echo "collection_status=success" >> $GITHUB_OUTPUT
+      continue-on-error: false
+    
+    - name: Merge new data with existing dataset
+      id: data_merge
+      if: steps.data_collection.outcome == 'success'
+      run: |
+        echo "🔄 Merging new data with existing dataset..."
+        python phase1_merge_data.py
+        echo "merge_status=success" >> $GITHUB_OUTPUT
+      continue-on-error: false
+    
+    - name: Validate merged data quality
+      id: data_validation
+      if: steps.data_merge.outcome == 'success'
+      run: |
+        echo "🔍 Validating data quality..."
+        python phase1_data_validation.py
+        echo "validation_status=success" >> $GITHUB_OUTPUT
+      continue-on-error: false
+    
+    - name: Run real-time feature engineering
+      id: feature_engineering
+      if: steps.data_validation.outcome == 'success'
+      run: |
+        echo "🔧 Running real-time feature engineering..."
+        python realtime_feature_engineering.py
+        echo "feature_status=success" >> $GITHUB_OUTPUT
+      continue-on-error: false
+    
+    - name: Update Hopsworks feature store (Enhanced)
+      id: hopsworks_update
+      if: steps.feature_engineering.outcome == 'success'
+      run: |
+        echo "🏪 Updating Hopsworks feature store with enhanced integration..."
+        python enhanced_hopsworks_integration.py
+        echo "hopsworks_status=success" >> $GITHUB_OUTPUT
+      continue-on-error: false
+    
+    - name: Generate pipeline report
+      if: always()
+      run: |
+        echo "📊 Generating pipeline execution report..."
+        python - <<EOF
+        import json
+        import os
+        from datetime import datetime
+        
+        # Collect pipeline status
+        pipeline_report = {
+            "pipeline_run": {
+                "timestamp": datetime.now().isoformat(),
+                "github_run_id": "${{ github.run_id }}",
+                "github_run_number": "${{ github.run_number }}",
+                "trigger": "${{ github.event_name }}"
+            },
+            "steps": {
+                "data_collection": "${{ steps.data_collection.outcome }}",
+                "data_merge": "${{ steps.data_merge.outcome }}",
+                "data_validation": "${{ steps.data_validation.outcome }}",
+                "feature_engineering": "${{ steps.feature_engineering.outcome }}",
+                "hopsworks_update": "${{ steps.hopsworks_update.outcome }}"
+            },
+            "outputs": {
+                "collection_status": "${{ steps.data_collection.outputs.collection_status }}",
+                "merge_status": "${{ steps.data_merge.outputs.merge_status }}",
+                "validation_status": "${{ steps.data_validation.outputs.validation_status }}",
+                "feature_status": "${{ steps.feature_engineering.outputs.feature_status }}",
+                "hopsworks_status": "${{ steps.hopsworks_update.outputs.hopsworks_status }}"
+            }
+        }
+        
+        # Save pipeline report
+        os.makedirs("data_repositories/pipeline_reports", exist_ok=True)
+        with open(f"data_repositories/pipeline_reports/pipeline_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json", 'w') as f:
+            json.dump(pipeline_report, f, indent=4)
+        
+        print("✅ Pipeline report generated")
+        print(f"📊 Status: {pipeline_report['steps']}")
+        EOF
+    
+    - name: Check for data files
+      if: always()
+      run: |
+        echo "📂 Checking generated data files..."
+        if [ -d "data_repositories" ]; then
+          echo "✅ Data repositories found"
+          echo "Contents structure:"
+          find data_repositories -type f -name "*.csv" -o -name "*.json" | head -20
+        else
+          echo "❌ Data repositories directory not found!"
+          exit 1
+        fi
+    
+    - name: Upload pipeline artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: realtime-pipeline-${{ github.run_number }}-${{ github.run_attempt }}
+        path: |
+          data_repositories/hourly_data/
+          data_repositories/merged_data/
+          data_repositories/features/
+          data_repositories/hopsworks/
+          data_repositories/pipeline_reports/
+        retention-days: 7
+    
+    - name: Advanced data quality analysis
+      if: success()
+      run: |
+        python - <<EOF
+        import pandas as pd
+        import numpy as np
+        import json
+        import os
+        from datetime import datetime, timedelta
+        
+        print("🔍 ADVANCED DATA QUALITY ANALYSIS")
+        print("=" * 50)
+        
+        try:
+            # Load latest merged dataset
+            df = pd.read_csv('data_repositories/merged_data/processed/merged_data.csv')
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            
+            # Load feature dataset if available
+            feature_file = 'data_repositories/features/engineered/realtime_features.csv'
+            if os.path.exists(feature_file):
+                features_df = pd.read_csv(feature_file)
+                print(f"✅ Features: {len(features_df)} records, {len(features_df.columns)} features")
+            else:
+                print("⚠️  Feature file not found - may be first run")
+            
+            # Analyze data freshness
+            latest_timestamp = df['timestamp'].max()
+            hours_since_latest = (datetime.now() - latest_timestamp).total_seconds() / 3600
+            
+            print(f"\n📊 DATA FRESHNESS ANALYSIS:")
+            print(f"   Latest data: {latest_timestamp}")
+            print(f"   Hours since latest: {hours_since_latest:.1f}h")
+            print(f"   Freshness status: {'✅ Fresh' if hours_since_latest < 2 else '⚠️ Stale'}")
+            
+            # Analyze data quality
+            print(f"\n📈 DATA QUALITY METRICS:")
+            print(f"   Total records: {len(df):,}")
+            print(f"   Date range: {df['timestamp'].min()} to {df['timestamp'].max()}")
+            print(f"   Missing values: {df.isnull().sum().sum()}")
+            print(f"   Duplicate timestamps: {df['timestamp'].duplicated().sum()}")
+            
+            # Check AQI distribution
+            if 'aqi_numeric' in df.columns:
+                aqi_stats = df['aqi_numeric'].describe()
+                print(f"\n🌬️  AQI STATISTICS:")
+                print(f"   Mean AQI: {aqi_stats['mean']:.1f}")
+                print(f"   Median AQI: {aqi_stats['50%']:.1f}")
+                print(f"   Min/Max AQI: {aqi_stats['min']:.1f} / {aqi_stats['max']:.1f}")
+            
+            # Generate quality report
+            quality_report = {
+                "analysis_timestamp": datetime.now().isoformat(),
+                "data_freshness": {
+                    "latest_data": latest_timestamp.isoformat(),
+                    "hours_since_latest": hours_since_latest,
+                    "status": "fresh" if hours_since_latest < 2 else "stale"
+                },
+                "data_quality": {
+                    "total_records": len(df),
+                    "missing_values": int(df.isnull().sum().sum()),
+                    "duplicate_timestamps": int(df['timestamp'].duplicated().sum()),
+                    "date_range": {
+                        "start": df['timestamp'].min().isoformat(),
+                        "end": df['timestamp'].max().isoformat()
+                    }
+                }
+            }
+            
+            if 'aqi_numeric' in df.columns:
+                quality_report["aqi_statistics"] = {
+                    "mean": float(aqi_stats['mean']),
+                    "median": float(aqi_stats['50%']),
+                    "min": float(aqi_stats['min']),
+                    "max": float(aqi_stats['max']),
+                    "std": float(aqi_stats['std'])
+                }
+            
+            # Save quality report
+            os.makedirs("data_repositories/quality_reports", exist_ok=True)
+            with open(f"data_repositories/quality_reports/quality_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json", 'w') as f:
+                json.dump(quality_report, f, indent=4)
+            
+            print(f"\n✅ Advanced quality analysis completed")
+            
+        except Exception as e:
+            print(f"\n❌ Error in quality analysis: {str(e)}")
+            import traceback
+            traceback.print_exc()
+        EOF
+    
+    - name: Notify on pipeline failure
+      if: failure()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const failedSteps = [];
+          if ('${{ steps.data_collection.outcome }}' === 'failure') failedSteps.push('Data Collection');
+          if ('${{ steps.data_merge.outcome }}' === 'failure') failedSteps.push('Data Merge');
+          if ('${{ steps.data_validation.outcome }}' === 'failure') failedSteps.push('Data Validation');
+          if ('${{ steps.feature_engineering.outcome }}' === 'failure') failedSteps.push('Feature Engineering');
+          if ('${{ steps.hopsworks_update.outcome }}' === 'failure') failedSteps.push('Hopsworks Update');
+          
+          const issueBody = [
+            '## Pipeline Failure Report',
+            '',
+            `**Failed Steps:** ${failedSteps.join(', ')}`,
+            '',
+            `**Timestamp:** ${new Date().toISOString()}`,
+            '',
+            '**Run Details:**',
+            `- Run ID: ${context.runId}`,
+            `- Run Number: ${context.runNumber}`,
+            `- Trigger: ${context.eventName}`,
+            '',
+            '**Failed Steps Details:**',
+            ...failedSteps.map(step => `- ❌ ${step}`),
+            '',
+            '**Action Required:**',
+            '1. Check the workflow run for detailed logs',
+            '2. Verify API keys and credentials',
+            '3. Check data source availability',
+            '4. Review error logs in artifacts',
+            '',
+            `**Priority:** ${failedSteps.includes('Data Collection') ? 'HIGH - Data collection failed' : 'MEDIUM - Feature pipeline failed'}`
+          ].join('\n');
+          
+          const issue = await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `Real-time Data Pipeline Failed - ${new Date().toISOString()}`,
+            body: issueBody
+          });
+          
+          console.log(`Created issue #${issue.data.number} for pipeline failure`);
+    
+    - name: Notify on success
+      if: success()
+      run: |
+        echo "🎉 Real-time data pipeline completed successfully!"
+        echo "✅ All steps completed: Data Collection → Merge → Validation → Feature Engineering → Hopsworks Update"
+        echo "📊 Pipeline artifacts uploaded for review"
+        echo "🚀 System ready for real-time predictions"

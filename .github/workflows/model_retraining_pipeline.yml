@@ -1,0 +1,346 @@
+name: Continuous Model Retraining Pipeline
+
+on:
+  schedule:
+    - cron: '0 */3 * * *'  # Run every 3 hours
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      force_retrain:
+        description: 'Force model retraining regardless of performance'
+        required: false
+        default: false
+        type: boolean
+      training_hours:
+        description: 'Hours of data to use for training'
+        required: false
+        default: '720'  # 30 days default
+        type: string
+
+# Prevent multiple retraining runs from overlapping
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  continuous_model_training:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45  # Extended timeout for model training
+    permissions:
+      contents: read
+      issues: write
+      actions: write
+    
+    env:
+      OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+      HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+      HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+      FORCE_RETRAIN: ${{ github.event.inputs.force_retrain || 'false' }}
+      TRAINING_HOURS: ${{ github.event.inputs.training_hours || '720' }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        # Install additional ML dependencies for training
+        pip install optuna bayesian-optimization scikit-optimize
+    
+    - name: Create model training directories
+      run: |
+        mkdir -p data_repositories/models/{trained,metadata,performance,backups}
+        mkdir -p data_repositories/training/{logs,experiments,validation}
+        mkdir -p data_repositories/deployment/{staging,production,rollback}
+    
+    - name: Check model retraining trigger
+      id: check_trigger
+      run: |
+        echo "🔍 Checking if model retraining is needed..."
+        python continuous_model_trigger.py
+        echo "trigger_result=$(cat trigger_result.txt)" >> $GITHUB_OUTPUT
+      continue-on-error: false
+    
+    - name: Fetch latest features from Hopsworks
+      id: fetch_features
+      if: steps.check_trigger.outputs.trigger_result == 'retrain' || env.FORCE_RETRAIN == 'true'
+      run: |
+        echo "📊 Fetching latest features from Hopsworks..."
+        python fetch_training_features.py --hours ${{ env.TRAINING_HOURS }}
+        echo "features_status=success" >> $GITHUB_OUTPUT
+      continue-on-error: false
+    
+    - name: Prepare training dataset
+      id: prepare_dataset
+      if: steps.fetch_features.outcome == 'success'
+      run: |
+        echo "🔧 Preparing training dataset with validation splits..."
+        python prepare_training_dataset.py
+        echo "dataset_status=success" >> $GITHUB_OUTPUT
+      continue-on-error: false
+    
+    - name: Train champion challenger models
+      id: train_models
+      if: steps.prepare_dataset.outcome == 'success'
+      run: |
+        echo "🎯 Training champion/challenger models with hyperparameter optimization..."
+        python train_champion_challenger.py
+        echo "training_status=success" >> $GITHUB_OUTPUT
+      continue-on-error: false
+    
+    - name: Validate model performance
+      id: validate_models
+      if: steps.train_models.outcome == 'success'
+      run: |
+        echo "✅ Validating model performance and selecting champion..."
+        python validate_model_performance.py
+        echo "validation_status=success" >> $GITHUB_OUTPUT
+      continue-on-error: false
+    
+    - name: Deploy champion model
+      id: deploy_model
+      if: steps.validate_models.outcome == 'success'
+      run: |
+        echo "🚀 Deploying champion model to production..."
+        python deploy_champion_model.py
+        echo "deployment_status=success" >> $GITHUB_OUTPUT
+      continue-on-error: false
+    
+    - name: Update model registry
+      id: update_registry
+      if: steps.deploy_model.outcome == 'success'
+      run: |
+        echo "📝 Updating model registry with new champion..."
+        python update_model_registry.py
+        echo "registry_status=success" >> $GITHUB_OUTPUT
+      continue-on-error: false
+    
+    - name: Performance monitoring setup
+      id: setup_monitoring
+      if: steps.update_registry.outcome == 'success'
+      run: |
+        echo "📊 Setting up performance monitoring for new model..."
+        python setup_model_monitoring.py
+        echo "monitoring_status=success" >> $GITHUB_OUTPUT
+      continue-on-error: false
+    
+    - name: Generate training report
+      if: always()
+      run: |
+        echo "📊 Generating comprehensive training report..."
+        python - <<EOF
+        import json
+        import os
+        from datetime import datetime
+        
+        # Collect training pipeline status
+        training_report = {
+            "pipeline_run": {
+                "timestamp": datetime.now().isoformat(),
+                "github_run_id": "${{ github.run_id }}",
+                "github_run_number": "${{ github.run_number }}",
+                "trigger": "${{ github.event_name }}",
+                "force_retrain": "${{ env.FORCE_RETRAIN }}",
+                "training_hours": "${{ env.TRAINING_HOURS }}"
+            },
+            "trigger_check": {
+                "result": "${{ steps.check_trigger.outputs.trigger_result }}",
+                "status": "${{ steps.check_trigger.outcome }}"
+            },
+            "training_steps": {
+                "fetch_features": "${{ steps.fetch_features.outcome }}",
+                "prepare_dataset": "${{ steps.prepare_dataset.outcome }}",
+                "train_models": "${{ steps.train_models.outcome }}",
+                "validate_models": "${{ steps.validate_models.outcome }}",
+                "deploy_model": "${{ steps.deploy_model.outcome }}",
+                "update_registry": "${{ steps.update_registry.outcome }}",
+                "setup_monitoring": "${{ steps.setup_monitoring.outcome }}"
+            },
+            "outputs": {
+                "features_status": "${{ steps.fetch_features.outputs.features_status }}",
+                "dataset_status": "${{ steps.prepare_dataset.outputs.dataset_status }}",
+                "training_status": "${{ steps.train_models.outputs.training_status }}",
+                "validation_status": "${{ steps.validate_models.outputs.validation_status }}",
+                "deployment_status": "${{ steps.deploy_model.outputs.deployment_status }}",
+                "registry_status": "${{ steps.update_registry.outputs.registry_status }}",
+                "monitoring_status": "${{ steps.setup_monitoring.outputs.monitoring_status }}"
+            }
+        }
+        
+        # Determine overall success
+        critical_steps = ["train_models", "validate_models", "deploy_model"]
+        successful_critical = sum(1 for step in critical_steps if training_report["training_steps"][step] == "success")
+        
+        training_report["summary"] = {
+            "overall_status": "success" if successful_critical == len(critical_steps) else "failed",
+            "critical_steps_passed": f"{successful_critical}/{len(critical_steps)}",
+            "retraining_executed": "${{ steps.check_trigger.outputs.trigger_result }}" == "retrain" or "${{ env.FORCE_RETRAIN }}" == "true",
+            "new_model_deployed": "${{ steps.deploy_model.outcome }}" == "success"
+        }
+        
+        # Save training report
+        os.makedirs("data_repositories/training/reports", exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        with open(f"data_repositories/training/reports/training_report_{timestamp}.json", 'w') as f:
+            json.dump(training_report, f, indent=4)
+        
+        print("✅ Training report generated")
+        print(f"📊 Overall Status: {training_report['summary']['overall_status']}")
+        print(f"🎯 Critical Steps: {training_report['summary']['critical_steps_passed']}")
+        print(f"🚀 New Model Deployed: {training_report['summary']['new_model_deployed']}")
+        EOF
+    
+    - name: Backup model artifacts
+      if: steps.deploy_model.outcome == 'success'
+      run: |
+        echo "💾 Backing up model artifacts and metadata..."
+        python - <<EOF
+        import shutil
+        import os
+        from datetime import datetime
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_dir = f"data_repositories/models/backups/backup_{timestamp}"
+        
+        # Create backup directory
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        # Backup critical files
+        files_to_backup = [
+            "data_repositories/models/trained/",
+            "data_repositories/models/metadata/",
+            "data_repositories/models/performance/"
+        ]
+        
+        for source in files_to_backup:
+            if os.path.exists(source):
+                if os.path.isdir(source):
+                    dest = os.path.join(backup_dir, os.path.basename(source.rstrip('/')))
+                    shutil.copytree(source, dest, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(source, backup_dir)
+        
+        print(f"✅ Model artifacts backed up to: {backup_dir}")
+        EOF
+    
+    - name: Upload training artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: model-training-${{ github.run_number }}-${{ github.run_attempt }}
+        path: |
+          data_repositories/models/
+          data_repositories/training/
+          data_repositories/deployment/
+        retention-days: 30  # Longer retention for model artifacts
+    
+    - name: Performance analysis and recommendations
+      if: steps.validate_models.outcome == 'success'
+      run: |
+        python - <<EOF
+        import json
+        import os
+        from datetime import datetime
+        
+        print("📈 PERFORMANCE ANALYSIS")
+        print("=" * 30)
+        
+        try:
+            # Load latest model performance if available
+            performance_files = []
+            if os.path.exists("data_repositories/models/performance"):
+                for file in os.listdir("data_repositories/models/performance"):
+                    if file.endswith('.json'):
+                        performance_files.append(file)
+            
+            if performance_files:
+                latest_file = sorted(performance_files)[-1]
+                with open(f"data_repositories/models/performance/{latest_file}", 'r') as f:
+                    performance = json.load(f)
+                
+                print(f"📊 Model Performance Summary:")
+                if 'validation_metrics' in performance:
+                    metrics = performance['validation_metrics']
+                    print(f"   R² Score: {metrics.get('r2_score', 'N/A')}")
+                    print(f"   MAE: {metrics.get('mae', 'N/A')}")
+                    print(f"   RMSE: {metrics.get('rmse', 'N/A')}")
+                
+                if 'model_comparison' in performance:
+                    comparison = performance['model_comparison']
+                    print(f"   Champion Model: {comparison.get('champion_model', 'N/A')}")
+                    print(f"   Performance Improvement: {comparison.get('improvement_percent', 'N/A')}%")
+            
+            # Performance recommendations
+            print(f"\n💡 Recommendations:")
+            print("   - Monitor model performance over next 24 hours")
+            print("   - Check prediction accuracy against actual AQI values") 
+            print("   - Review feature importance for any significant changes")
+            print("   - Set up alerts for performance degradation")
+            
+        except Exception as e:
+            print(f"⚠️ Performance analysis error: {str(e)}")
+        EOF
+    
+    - name: Notify on training failure
+      if: failure()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const failedSteps = [];
+          if ('${{ steps.check_trigger.outcome }}' === 'failure') failedSteps.push('Trigger Check');
+          if ('${{ steps.fetch_features.outcome }}' === 'failure') failedSteps.push('Feature Fetch');
+          if ('${{ steps.prepare_dataset.outcome }}' === 'failure') failedSteps.push('Dataset Preparation');
+          if ('${{ steps.train_models.outcome }}' === 'failure') failedSteps.push('Model Training');
+          if ('${{ steps.validate_models.outcome }}' === 'failure') failedSteps.push('Model Validation');
+          if ('${{ steps.deploy_model.outcome }}' === 'failure') failedSteps.push('Model Deployment');
+          
+          const issueBody = [
+            '## Model Retraining Pipeline Failure',
+            '',
+            `**Failed Steps:** ${failedSteps.join(', ')}`,
+            '',
+            `**Timestamp:** ${new Date().toISOString()}`,
+            '',
+            '**Run Details:**',
+            `- Run ID: ${context.runId}`,
+            `- Run Number: ${context.runNumber}`,
+            `- Force Retrain: ${{ env.FORCE_RETRAIN }}`,
+            `- Training Hours: ${{ env.TRAINING_HOURS }}`,
+            '',
+            '**Failed Steps Details:**',
+            ...failedSteps.map(step => `- ❌ ${step}`),
+            '',
+            '**Action Required:**',
+            '1. Check model training logs in artifacts',
+            '2. Verify Hopsworks feature store connectivity', 
+            '3. Review training data quality and volume',
+            '4. Check model performance thresholds',
+            '5. Validate deployment pipeline',
+            '',
+            `**Priority:** ${failedSteps.some(step => step.includes('Training') || step.includes('Deployment')) ? 'HIGH - Model training/deployment failed' : 'MEDIUM - Pipeline issue'}`
+          ].join('\n');
+          
+          const issue = await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `Model Retraining Pipeline Failed - ${new Date().toISOString()}`,
+            body: issueBody
+          });
+          
+          console.log(`Created issue #${issue.data.number} for training pipeline failure`);
+    
+    - name: Notify on training success
+      if: success() && steps.deploy_model.outcome == 'success'
+      run: |
+        echo "🎉 Model retraining pipeline completed successfully!"
+        echo "✅ All steps completed: Trigger → Fetch → Prepare → Train → Validate → Deploy → Monitor"
+        echo "🎯 New champion model deployed and monitoring activated"
+        echo "📊 Performance reports available in artifacts"
+        echo "🚀 System ready with improved predictions"
