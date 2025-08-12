@@ -539,8 +539,7 @@ class EnhancedHopsworksManager:
                     description=config.get('description', f'Real-time features for {fg_name}'),
                     primary_key=['timestamp'],
                     event_time='timestamp',
-                    online_enabled=config.get('online_enabled', False),
-                    statistics_enabled=True
+                    online_enabled=config.get('online_enabled', False)
                 )
                 
                 # Insert initial data
