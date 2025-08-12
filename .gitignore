@@ -43,6 +43,9 @@ Thumbs.db
 # Data repositories (contains generated data)
 data_repositories/
 
+# Allow sample feature file for Phase 2 testing
+!data_repositories/features/engineered/realtime_features.csv
+
 # Model files
 *.pkl
 *.joblib
