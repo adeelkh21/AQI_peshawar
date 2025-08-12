@@ -1,0 +1,31 @@
+{
+    "timestamp": "2025-08-11T21:30:10.195898",
+    "total_records": 3109,
+    "total_features": 77,
+    "removed_features": 8,
+    "performance": {
+        "temporal_split_r2": 0.5390814340890291,
+        "cv_mean_r2": 0.4665860764821376,
+        "cv_std_r2": 0.24111664246267075,
+        "mae": 8.19563339896553
+    },
+    "feature_categories": {
+        "base": 9,
+        "lag": 29,
+        "rolling": 21,
+        "seasonal": 14,
+        "interaction": 4
+    },
+    "top_10_features": [
+        "pm10",
+        "aqi_numeric_rolling_mean_6h",
+        "pm2_5",
+        "aqi_lag1h",
+        "aqi_numeric_rolling_std_12h",
+        "pm2_5_rolling_mean_24h",
+        "pm2_5_rolling_mean_6h",
+        "aqi_lag3h",
+        "aqi_numeric_rolling_mean_12h",
+        "aqi_numeric_rolling_std_24h"
+    ]
+}

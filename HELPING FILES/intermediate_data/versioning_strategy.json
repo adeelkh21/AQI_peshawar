@@ -1,0 +1,27 @@
+{
+    "version_1": {
+        "description": "Initial feature set from Phase 2",
+        "features_count": 215,
+        "performance": {
+            "r2_score": 0.696,
+            "mae": 8.2,
+            "validation_method": "temporal_split"
+        },
+        "created_date": "2025-08-11T22:12:16.183606",
+        "status": "production_ready"
+    },
+    "versioning_rules": {
+        "naming_convention": "aqi_{category}_v{version}",
+        "backward_compatibility": "maintain_for_2_versions",
+        "update_triggers": [
+            "performance_degradation_>5%",
+            "new_feature_importance_analysis",
+            "data_drift_detection"
+        ],
+        "validation_required": [
+            "temporal_split_validation",
+            "time_series_cv",
+            "feature_importance_analysis"
+        ]
+    }
+}

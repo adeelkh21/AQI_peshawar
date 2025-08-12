@@ -1,0 +1,68 @@
+{
+    "weather": {
+        "temperature": {
+            "min": -30,
+            "max": 60,
+            "unit": "\u00b0C"
+        },
+        "relative_humidity": {
+            "min": 0,
+            "max": 100,
+            "unit": "%"
+        },
+        "wind_speed": {
+            "min": 0,
+            "max": 100,
+            "unit": "m/s"
+        },
+        "pressure": {
+            "min": 800,
+            "max": 1200,
+            "unit": "hPa"
+        }
+    },
+    "pollution": {
+        "pm2_5": {
+            "min": 0,
+            "max": 1000,
+            "unit": "\u03bcg/m\u00b3"
+        },
+        "pm10": {
+            "min": 0,
+            "max": 1000,
+            "unit": "\u03bcg/m\u00b3"
+        },
+        "no2": {
+            "min": 0,
+            "max": 500,
+            "unit": "\u03bcg/m\u00b3"
+        },
+        "o3": {
+            "min": 0,
+            "max": 500,
+            "unit": "\u03bcg/m\u00b3"
+        },
+        "aqi_category": {
+            "min": 1,
+            "max": 5,
+            "unit": "category"
+        }
+    },
+    "temporal": {
+        "hour": {
+            "min": 0,
+            "max": 23,
+            "unit": "hour"
+        },
+        "day_of_week": {
+            "min": 0,
+            "max": 6,
+            "unit": "day"
+        },
+        "month": {
+            "min": 1,
+            "max": 12,
+            "unit": "month"
+        }
+    }
+}
